@@ -86,7 +86,7 @@ func (r *runner) tool() (string, error) {
 	if !r.modfileExists() {
 		return "", fmt.Errorf("magetools: no modfile for %s", r.binaryName)
 	}
-	content, err := sh.Output("go", "mod", "edit", "-modfile", r.modFile, "-json")
+	content, err := outputCmd("go", "mod", "edit", "-modfile", r.modFile, "-json")
 	if err != nil {
 		return "", fmt.Errorf("magetools: unable to get tool from %s: %w", r.modFile, err)
 	}
@@ -105,10 +105,16 @@ func (r *runner) tool() (string, error) {
 	return data.Tools[0].Path, nil
 }
 
+// TODO: add option to show/debug command that's going to run?
 func (r *runner) runCmd(program string, args ...string) error {
 	// sh.RunWithV adds os.Environ(); only adds additional env vars here
 	additionalEnv := map[string]string{"GOTOOLCHAIN": fmt.Sprintf("go%s", r.goVersion)}
 	return sh.RunWithV(additionalEnv, program, args...)
+}
+
+// TODO: add option to show/debug command that's going to run?
+func outputCmd(program string, args ...string) (string, error) {
+	return sh.Output(program, args...)
 }
 
 func newRunnerFromPackage(packageName string) (*runner, error) {
@@ -164,7 +170,7 @@ func computeBinaryName(arg string) string {
 }
 
 func currentModuleGoVersion() (string, error) {
-	content, err := sh.Output("go", "mod", "edit", "-json")
+	content, err := outputCmd("go", "mod", "edit", "-json")
 	if err != nil {
 		return "", fmt.Errorf("magetools: unable to get current module go version: %w", err)
 	}
