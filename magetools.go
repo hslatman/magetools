@@ -48,6 +48,9 @@ func (r *runner) get() error {
 			return err
 		}
 	}
+	if r.packageName == "" {
+		return fmt.Errorf(`magetools: no package name available for %s`, r.binaryName)
+	}
 	if err := r.runCmd("go", "get", "-modfile", r.modFile, "-tool", r.packageName); err != nil {
 		return err
 	}
