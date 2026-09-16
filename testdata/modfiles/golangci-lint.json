@@ -1,0 +1,14 @@
+{
+	"Module": { "Path": "golangci-lint" },
+	"Go": "1.25.0",
+	"Require": [
+		{ "Path": "github.com/golangci/golangci-lint/v2", "Version": "v2.12.2", "Indirect": true }
+	],
+	"Exclude": null,
+	"Replace": null,
+	"Retract": null,
+	"Tool": [
+		{ "Path": "github.com/golangci/golangci-lint/v2/cmd/golangci-lint" }
+	],
+	"Ignore": null
+}

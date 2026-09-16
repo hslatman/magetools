@@ -24,17 +24,19 @@ func Get() error {
 			return err
 		}
 
-		pkgPath, version, err := r.toolInfo()
+		info, err := r.toolInfo()
 		if err != nil {
 			return err
 		}
 
 		// Reinstall the exact version that's pinned in the modfile rather
 		// than upgrading to the latest available.
-		if version != "" {
-			pkgPath += "@" + version
+		pkgPath := info.Package
+		if info.Version != "" {
+			pkgPath += "@" + info.Version
 		}
 		r.packageName = pkgPath
+		r.binaryName = computeBinaryName(info.Package)
 
 		if err := r.get(); err != nil {
 			return err
@@ -57,13 +59,13 @@ func List() error {
 			return err
 		}
 
-		pkgPath, _, err := r.toolInfo()
+		info, err := r.toolInfo()
 		if err != nil {
 			// Skip directories that aren't valid tool modules.
 			continue
 		}
 
-		fmt.Println(computeBinaryName(pkgPath))
+		fmt.Println(computeBinaryName(info.Package))
 	}
 
 	return nil

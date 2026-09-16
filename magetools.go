@@ -1,3 +1,19 @@
+// Package magetools installs and runs developer tools without adding them to
+// the application's own module.
+//
+// Every tool gets its own sidecar modfile at .magetools/<slug>/go.mod, where
+// <slug> is derived from the tool's package path. That modfile pins the tool
+// with the Go 1.24+ "tool" directive and records the version of the module
+// providing it, so the application's own go.mod and go.sum stay free of tool
+// dependencies and a tool upgrade can never move the application's
+// requirements. Tools are installed with "go get -modfile <modfile> -tool" and
+// executed with "go tool -modfile <modfile> <binary>", which builds them from
+// the versions pinned in that sidecar modfile.
+//
+// The exported functions double as Mage targets: Add installs a tool, Get
+// reinstalls every pinned tool at its pinned version, List lists them, and
+// Update is the only operation that moves a version. Installed exposes the same
+// inventory to other Go code.
 package magetools
 
 import (
@@ -89,18 +105,41 @@ func (r *runner) modfileExists() bool {
 	return err == nil
 }
 
-// toolInfo returns the tool's package path and the version it is currently
-// pinned at in the modfile. The version is taken from the required module whose
-// path is the longest prefix of the tool package path, so that reinstalling a
-// tool restores the exact version rather than upgrading it.
-func (r *runner) toolInfo() (pkgPath, version string, err error) {
+// toolInfoResult describes the single tool pinned in a tool modfile.
+type toolInfoResult struct {
+	// Package is the tool package path from the "tool" directive, e.g.
+	// github.com/golangci/golangci-lint/v2/cmd/golangci-lint.
+	Package string
+	// Module is the module providing that package: the longest required module
+	// path that prefixes Package. Update needs it, because "go get -u" is
+	// applied to a module.
+	Module string
+	// Version is the version Module is pinned at in the modfile.
+	Version string
+}
+
+// toolInfo returns the tool pinned in the runner's modfile. It is the thin exec
+// wrapper; all parsing lives in parseToolInfo so it can be tested offline.
+func (r *runner) toolInfo() (toolInfoResult, error) {
 	if !r.modfileExists() {
-		return "", "", fmt.Errorf("magetools: no modfile for %s", r.slug)
+		return toolInfoResult{}, fmt.Errorf("magetools: no modfile for %s", r.slug)
 	}
 	content, err := outputCmd("go", "mod", "edit", "-modfile", r.modFile, "-json")
 	if err != nil {
-		return "", "", fmt.Errorf("magetools: unable to get tool from %s: %w", r.modFile, err)
+		return toolInfoResult{}, fmt.Errorf("magetools: unable to get tool from %s: %w", r.modFile, err)
 	}
+	info, err := parseToolInfo([]byte(content))
+	if err != nil {
+		return toolInfoResult{}, fmt.Errorf("magetools: %s: %w", r.modFile, err)
+	}
+	return info, nil
+}
+
+// parseToolInfo parses the output of "go mod edit -json" and resolves the tool
+// package path to the module that provides it. The version is taken from the
+// required module whose path is the longest prefix of the tool package path, so
+// that reinstalling a tool restores the exact version rather than upgrading it.
+func parseToolInfo(content []byte) (toolInfoResult, error) {
 	var data struct {
 		Tools []struct {
 			Path string `json:"Path"`
@@ -110,35 +149,55 @@ func (r *runner) toolInfo() (pkgPath, version string, err error) {
 			Version string `json:"Version"`
 		} `json:"Require"`
 	}
-	if err := json.Unmarshal([]byte(content), &data); err != nil {
-		return "", "", fmt.Errorf(`magetools: unable to parse output of "go mod edit -modfile %s -json": %w`, r.modFile, err)
+	if err := json.Unmarshal(content, &data); err != nil {
+		return toolInfoResult{}, fmt.Errorf(`unable to parse output of "go mod edit -json": %w`, err)
 	}
 
 	if len(data.Tools) == 0 {
-		return "", "", fmt.Errorf("magetools: no tool found in %s", r.modFile)
+		return toolInfoResult{}, fmt.Errorf("no tool found")
 	}
 
 	// NOTE: currently assumes a single tool is present
-	pkgPath = data.Tools[0].Path
+	info := toolInfoResult{Package: data.Tools[0].Path}
 
-	best := ""
 	for _, req := range data.Require {
-		if req.Path == pkgPath || strings.HasPrefix(pkgPath, req.Path+"/") {
-			if len(req.Path) > len(best) {
-				best = req.Path
-				version = req.Version
+		if req.Path == info.Package || strings.HasPrefix(info.Package, req.Path+"/") {
+			if len(req.Path) > len(info.Module) {
+				info.Module = req.Path
+				info.Version = req.Version
 			}
 		}
 	}
 
-	return pkgPath, version, nil
+	return info, nil
 }
 
 // TODO: add option to show/debug command that's going to run?
 func (r *runner) runCmd(program string, args ...string) error {
+	version, err := r.toolchainVersion()
+	if err != nil {
+		return err
+	}
 	// sh.RunWithV adds os.Environ(); only adds additional env vars here
-	additionalEnv := map[string]string{"GOTOOLCHAIN": fmt.Sprintf("go%s", r.goVersion)}
+	additionalEnv := map[string]string{"GOTOOLCHAIN": fmt.Sprintf("go%s", version)}
 	return sh.RunWithV(additionalEnv, program, args...)
+}
+
+// toolchainVersion returns the Go toolchain the current module asks for,
+// resolving it on first use and caching it. It is deliberately not resolved in
+// init: it costs a subprocess, it is identical for every runner in a process,
+// and the read-only paths (Installed, List) never need it, so constructing a
+// runner for them no longer spawns a "go mod edit -json" of its own.
+func (r *runner) toolchainVersion() (string, error) {
+	if r.goVersion != "" {
+		return r.goVersion, nil
+	}
+	version, err := currentModuleGoVersion()
+	if err != nil {
+		return "", err
+	}
+	r.goVersion = version
+	return r.goVersion, nil
 }
 
 // TODO: add option to show/debug command that's going to run?
@@ -190,13 +249,13 @@ func newRunnerFromBinaryName(binaryName string) (*runner, error) {
 			return nil, err
 		}
 
-		pkgPath, _, err := r.toolInfo()
+		info, err := r.toolInfo()
 		if err != nil {
 			// Skip directories that aren't valid tool modules.
 			continue
 		}
 
-		if computeBinaryName(pkgPath) == binaryName {
+		if computeBinaryName(info.Package) == binaryName {
 			r.binaryName = binaryName
 			return r, nil
 		}
@@ -205,17 +264,11 @@ func newRunnerFromBinaryName(binaryName string) (*runner, error) {
 	return nil, fmt.Errorf("magetools: tool %q not found", binaryName)
 }
 
+// init resolves the runner's sidecar modfile path. It deliberately spawns no
+// subprocess: the Go toolchain version is resolved lazily by toolchainVersion,
+// on the first command that actually needs it.
 func (r *runner) init() error {
-	modFile := filepath.Join(toolDir, r.slug, "go.mod")
-
-	goVersion, err := currentModuleGoVersion()
-	if err != nil {
-		return err
-	}
-
-	r.modFile = modFile
-	r.goVersion = goVersion
-
+	r.modFile = filepath.Join(toolDir, r.slug, "go.mod")
 	return nil
 }
 
