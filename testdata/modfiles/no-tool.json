@@ -1,0 +1,10 @@
+{
+	"Module": { "Path": "probetool" },
+	"Go": "1.25.0",
+	"Require": null,
+	"Exclude": null,
+	"Replace": null,
+	"Retract": null,
+	"Tool": null,
+	"Ignore": null
+}

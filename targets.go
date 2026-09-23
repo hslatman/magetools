@@ -1,10 +1,6 @@
 package magetools
 
-import (
-	"fmt"
-	"io/fs"
-	"os"
-)
+import "fmt"
 
 // Adds a tool
 func Add(arg string) error {
@@ -17,63 +13,60 @@ func Add(arg string) error {
 
 // Gets all tools
 func Get() error {
-	root, err := os.OpenRoot(toolDir)
+	slugs, err := installedSlugs()
 	if err != nil {
 		return err
 	}
 
-	fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, err error) error {
-		if path == "." {
-			return nil
-		}
-
-		if !d.IsDir() {
-			return nil
-		}
-
-		r, err := newRunnerFromBinaryName(path)
+	for _, slug := range slugs {
+		r, err := newRunnerFromSlug(slug)
 		if err != nil {
 			return err
 		}
 
-		tool, err := r.tool()
+		info, err := r.toolInfo()
 		if err != nil {
 			return err
 		}
 
-		r.packageName = tool
+		// Reinstall the exact version that's pinned in the modfile rather
+		// than upgrading to the latest available.
+		pkgPath := info.Package
+		if info.Version != "" {
+			pkgPath += "@" + info.Version
+		}
+		r.packageName = pkgPath
+		r.binaryName = computeBinaryName(info.Package)
 
 		if err := r.get(); err != nil {
 			return err
 		}
-
-		return nil
-	})
+	}
 
 	return nil
 }
 
 // Lists all available tools
 func List() error {
-	root, err := os.OpenRoot(toolDir)
+	slugs, err := installedSlugs()
 	if err != nil {
 		return err
 	}
 
-	fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, err error) error {
-		if path == "." {
-			return nil
+	for _, slug := range slugs {
+		r, err := newRunnerFromSlug(slug)
+		if err != nil {
+			return err
 		}
 
-		if !d.IsDir() {
-			return nil
+		info, err := r.toolInfo()
+		if err != nil {
+			// Skip directories that aren't valid tool modules.
+			continue
 		}
 
-		// TODO: additional validation; information?
-		fmt.Println(path)
-
-		return nil
-	})
+		fmt.Println(computeBinaryName(info.Package))
+	}
 
 	return nil
 }

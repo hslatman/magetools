@@ -1,0 +1,15 @@
+{
+	"Module": { "Path": "govulncheck" },
+	"Go": "1.25.0",
+	"Require": [
+		{ "Path": "golang.org/x", "Version": "v0.0.1" },
+		{ "Path": "golang.org/x/vuln", "Version": "v1.1.4" }
+	],
+	"Exclude": null,
+	"Replace": null,
+	"Retract": null,
+	"Tool": [
+		{ "Path": "golang.org/x/vuln/cmd/govulncheck" }
+	],
+	"Ignore": null
+}
