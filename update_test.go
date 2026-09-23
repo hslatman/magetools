@@ -17,8 +17,8 @@ func TestUpdateUpgradesPinnedVersion(t *testing.T) {
 	}
 
 	// The go command resolves -modfile relative to the working directory, and
-	// currentModuleGoVersion runs "go mod edit -json" in it, so the test needs a
-	// real module as its working directory.
+	// refuses to use it at all outside a main module ("cannot find main module,
+	// but -modfile was set"), so the test needs a real module to run in.
 	t.Chdir(t.TempDir())
 
 	if _, err := outputCmd("go", "mod", "init", "example.com/updatetest"); err != nil {
@@ -100,8 +100,8 @@ func TestUpdateUsesModulePathNotPackagePath(t *testing.T) {
 		slug        = "zz-example-com-mod-cmd-tool"
 	)
 
-	// currentModuleGoVersion runs "go mod edit -json" in the working directory,
-	// so Update needs a real module as its working directory.
+	// The go command refuses -modfile outside a main module, so Update needs a
+	// real module as its working directory.
 	t.Chdir(t.TempDir())
 
 	if _, err := outputCmd("go", "mod", "init", "example.com/updatetest"); err != nil {

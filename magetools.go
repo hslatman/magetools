@@ -57,7 +57,6 @@ type runner struct {
 	binaryName  string
 	slug        string
 	modFile     string
-	goVersion   string
 }
 
 func (r *runner) get() error {
@@ -173,31 +172,16 @@ func parseToolInfo(content []byte) (toolInfoResult, error) {
 }
 
 // TODO: add option to show/debug command that's going to run?
+// runCmd runs a command, inheriting the caller's environment unchanged.
+//
+// It deliberately does not set GOTOOLCHAIN. Pinning it to the application's go
+// directive made any tool whose own go.mod requires a newer Go impossible to
+// install, and a "+auto" form instead makes the go command re-exec into a
+// different toolchain, which "go get -modfile" does not survive. Choosing a
+// toolchain policy is the caller's business; Go already defaults to "auto",
+// and a caller who set "local" deliberately should keep it.
 func (r *runner) runCmd(program string, args ...string) error {
-	version, err := r.toolchainVersion()
-	if err != nil {
-		return err
-	}
-	// sh.RunWithV adds os.Environ(); only adds additional env vars here
-	additionalEnv := map[string]string{"GOTOOLCHAIN": fmt.Sprintf("go%s", version)}
-	return sh.RunWithV(additionalEnv, program, args...)
-}
-
-// toolchainVersion returns the Go toolchain the current module asks for,
-// resolving it on first use and caching it. It is deliberately not resolved in
-// init: it costs a subprocess, it is identical for every runner in a process,
-// and the read-only paths (Installed, List) never need it, so constructing a
-// runner for them no longer spawns a "go mod edit -json" of its own.
-func (r *runner) toolchainVersion() (string, error) {
-	if r.goVersion != "" {
-		return r.goVersion, nil
-	}
-	version, err := currentModuleGoVersion()
-	if err != nil {
-		return "", err
-	}
-	r.goVersion = version
-	return r.goVersion, nil
+	return sh.RunV(program, args...)
 }
 
 // TODO: add option to show/debug command that's going to run?
@@ -264,9 +248,8 @@ func newRunnerFromBinaryName(binaryName string) (*runner, error) {
 	return nil, fmt.Errorf("magetools: tool %q not found", binaryName)
 }
 
-// init resolves the runner's sidecar modfile path. It deliberately spawns no
-// subprocess: the Go toolchain version is resolved lazily by toolchainVersion,
-// on the first command that actually needs it.
+// init resolves the runner's sidecar modfile path. It spawns no subprocess, so
+// constructing a runner is free for the read-only paths (Installed, List).
 func (r *runner) init() error {
 	r.modFile = filepath.Join(toolDir, r.slug, "go.mod")
 	return nil
@@ -314,30 +297,4 @@ func computeBinaryName(arg string) string {
 		name = path.Base(path.Dir(p))
 	}
 	return name
-}
-
-func currentModuleGoVersion() (string, error) {
-	content, err := outputCmd("go", "mod", "edit", "-json")
-	if err != nil {
-		return "", fmt.Errorf("magetools: unable to get current module go version: %w", err)
-	}
-	var data struct {
-		Go string `json:"Go"`
-	}
-	if err := json.Unmarshal([]byte(content), &data); err != nil {
-		return "", fmt.Errorf(`magetools: unable to parse output of "go mod edit -json": %w`, err)
-	}
-	return normalizeToolchainVersion(data.Go), nil
-}
-
-// normalizeToolchainVersion ensures a Go version is a valid toolchain version.
-// The "go" directive in go.mod may be a language version like "1.24", but
-// GOTOOLCHAIN requires a full toolchain version like "go1.24.0" ("go1.24" is
-// rejected as "a language version but not a toolchain version"). A "major.minor"
-// version therefore gets a ".0" patch appended; anything else is left as-is.
-func normalizeToolchainVersion(version string) string {
-	if strings.Count(version, ".") == 1 {
-		return version + ".0"
-	}
-	return version
 }

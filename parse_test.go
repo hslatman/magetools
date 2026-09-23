@@ -56,23 +56,3 @@ func TestComputeBinaryName(t *testing.T) {
 		})
 	}
 }
-
-func TestNormalizeToolchainVersion(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"language version gains a patch", "1.24", "1.24.0"},
-		{"full version unchanged", "1.25.0", "1.25.0"},
-		{"patch version unchanged", "1.24.3", "1.24.3"},
-		{"empty unchanged", "", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := normalizeToolchainVersion(tt.in); got != tt.want {
-				t.Errorf("normalizeToolchainVersion(%q) = %q, want %q", tt.in, got, tt.want)
-			}
-		})
-	}
-}
