@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -57,6 +58,9 @@ type runner struct {
 	binaryName  string
 	slug        string
 	modFile     string
+	// dir is the repository the tool directory belongs to. The empty string
+	// means the working directory, which is what the Mage targets use.
+	dir string
 }
 
 func (r *runner) get() error {
@@ -100,7 +104,11 @@ func (r *runner) mkdirAll() error {
 }
 
 func (r *runner) modfileExists() bool {
-	_, err := os.Stat(r.modFile)
+	path := r.modFile
+	if r.dir != "" {
+		path = filepath.Join(r.dir, path)
+	}
+	_, err := os.Stat(path)
 	return err == nil
 }
 
@@ -123,7 +131,7 @@ func (r *runner) toolInfo() (toolInfoResult, error) {
 	if !r.modfileExists() {
 		return toolInfoResult{}, fmt.Errorf("magetools: no modfile for %s", r.slug)
 	}
-	content, err := outputCmd("go", "mod", "edit", "-modfile", r.modFile, "-json")
+	content, err := outputCmdIn(r.dir, "go", "mod", "edit", "-modfile", r.modFile, "-json")
 	if err != nil {
 		return toolInfoResult{}, fmt.Errorf("magetools: unable to get tool from %s: %w", r.modFile, err)
 	}
@@ -189,6 +197,22 @@ func outputCmd(program string, args ...string) (string, error) {
 	return sh.Output(program, args...)
 }
 
+// outputCmdIn runs a command in dir and returns its trimmed output. An empty
+// dir means the working directory.
+//
+// It exists so that a repository can be inspected without chdir-ing into it:
+// the working directory is process-global, so a caller that had to change it
+// could not inspect two repositories at once.
+func outputCmdIn(dir, program string, args ...string) (string, error) {
+	if dir == "" {
+		return outputCmd(program, args...)
+	}
+	cmd := exec.Command(program, args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err
+}
+
 func newRunnerFromPackage(packageName string) (*runner, error) {
 	r := runner{
 		packageName: packageName,
@@ -206,8 +230,16 @@ func newRunnerFromPackage(packageName string) (*runner, error) {
 // newRunnerFromSlug creates a runner for an already installed tool, identified
 // by the slug of its storage directory under toolDir.
 func newRunnerFromSlug(slug string) (*runner, error) {
+	return newRunnerFromSlugIn("", slug)
+}
+
+// newRunnerFromSlugIn is newRunnerFromSlug for a repository the caller is not
+// standing in. modFile stays relative to that repository, because the go
+// command resolves -modfile against the directory it runs in.
+func newRunnerFromSlugIn(dir, slug string) (*runner, error) {
 	r := runner{
 		slug: slug,
+		dir:  dir,
 	}
 
 	if err := r.init(); err != nil {
@@ -258,12 +290,23 @@ func (r *runner) init() error {
 // installedSlugs returns the slugs of all installed tools, i.e. the directory
 // names directly under toolDir. It returns nil when no tools are installed yet.
 func installedSlugs() ([]string, error) {
-	entries, err := os.ReadDir(toolDir)
+	return installedSlugsIn("")
+}
+
+// installedSlugsIn is installedSlugs for a repository the caller is not
+// standing in. An empty dir means the working directory.
+func installedSlugsIn(dir string) ([]string, error) {
+	root := toolDir
+	if dir != "" {
+		root = filepath.Join(dir, toolDir)
+	}
+
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("magetools: unable to read %s: %w", toolDir, err)
+		return nil, fmt.Errorf("magetools: unable to read %s: %w", root, err)
 	}
 
 	var slugs []string

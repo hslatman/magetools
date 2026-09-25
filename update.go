@@ -18,6 +18,10 @@ import "fmt"
 // would also change the package path in the "tool" directive. Crossing a major
 // version means adding the new path with Add.
 func Update() error {
+	if err := requireModule(""); err != nil {
+		return err
+	}
+
 	slugs, err := installedSlugs()
 	if err != nil {
 		return err

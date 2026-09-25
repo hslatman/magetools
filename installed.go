@@ -38,14 +38,31 @@ type Tool struct {
 // notice under -debug. That is intended; it is an inspection API for other Go
 // code, not a target.
 func Installed() ([]Tool, error) {
-	slugs, err := installedSlugs()
+	return InstalledIn("")
+}
+
+// InstalledIn returns the tools installed in dir, without changing the working
+// directory. An empty dir means the working directory.
+//
+// It exists so that several repositories can be inspected at once: the working
+// directory is process-global, so a caller forced to chdir into each one could
+// only ever read them in sequence.
+//
+// Each Tool's Modfile stays relative to dir, because that is how the go command
+// resolves -modfile: relative to the directory it runs in.
+func InstalledIn(dir string) ([]Tool, error) {
+	if err := requireModule(dir); err != nil {
+		return nil, err
+	}
+
+	slugs, err := installedSlugsIn(dir)
 	if err != nil {
 		return nil, err
 	}
 
 	tools := make([]Tool, 0, len(slugs))
 	for _, slug := range slugs {
-		r, err := newRunnerFromSlug(slug)
+		r, err := newRunnerFromSlugIn(dir, slug)
 		if err != nil {
 			return nil, err
 		}

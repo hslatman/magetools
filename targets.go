@@ -48,6 +48,10 @@ func Get() error {
 
 // Lists all available tools
 func List() error {
+	if err := requireModule(""); err != nil {
+		return err
+	}
+
 	slugs, err := installedSlugs()
 	if err != nil {
 		return err
